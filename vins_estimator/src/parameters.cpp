@@ -63,8 +63,8 @@ void readParameters(ros::NodeHandle &n)
 
     SOLVER_TIME = fsSettings["max_solver_time"];
     NUM_ITERATIONS = fsSettings["max_num_iterations"];
-    MIN_PARALLAX = fsSettings["keyframe_parallax"];
-    MIN_PARALLAX = MIN_PARALLAX / FOCAL_LENGTH;
+    MIN_PARALLAX = fsSettings["keyframe_parallax"]; //keyframe selection threshold (pixel)
+    MIN_PARALLAX = MIN_PARALLAX / FOCAL_LENGTH; //固定值:460
 
     fsSettings["output_path"] >> VINS_RESULT_PATH;
     VINS_RESULT_PATH = VINS_FOLDER_PATH + VINS_RESULT_PATH;
@@ -75,8 +75,11 @@ void readParameters(ros::NodeHandle &n)
     ACC_W = fsSettings["acc_w"];
     GYR_N = fsSettings["gyr_n"];
     GYR_W = fsSettings["gyr_w"];
-    G.z() = fsSettings["g_norm"];
+    G.z() = fsSettings["g_norm"]; //9.8
 
+//# 0 Have an accurate extrinsic parameters. We will trust the following imu^R_cam, imu^T_cam, don't change it.
+//# 1 Have an initial guess about extrinsic parameters. We will optimize around your initial guess.
+//# 2 Don't know anything about extrinsic parameters. You don't need to give R,T. We will try to calibrate it. Do some rotation movement at beginning.
     ESTIMATE_EXTRINSIC = fsSettings["estimate_extrinsic"];
     if (ESTIMATE_EXTRINSIC == 2)
     {
@@ -106,16 +109,16 @@ void readParameters(ros::NodeHandle &n)
         cv::cv2eigen(cv_R, eigen_R);
         cv::cv2eigen(cv_T, eigen_T);
         Eigen::Quaterniond Q(eigen_R);
-        eigen_R = Q.normalized();
+        eigen_R = Q.normalized(); //归一化后重新赋值旋转矩阵
         RIC.push_back(eigen_R);
         TIC.push_back(eigen_T);
         ROS_INFO_STREAM("Extrinsic_R : " << std::endl << RIC[0]);
         ROS_INFO_STREAM("Extrinsic_T : " << std::endl << TIC[0].transpose());
-        
     } 
 
 
-
+// if you want to use loop closure to minimize the drift,
+// set loop_closure true and give your brief pattern file path and vocabulary file path accordingly;
     LOOP_CLOSURE = fsSettings["loop_closure"];
     if (LOOP_CLOSURE == 1)
     {

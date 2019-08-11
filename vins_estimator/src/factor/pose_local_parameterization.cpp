@@ -17,6 +17,8 @@ bool PoseLocalParameterization::Plus(const double *x, const double *delta, doubl
 
     return true;
 }
+
+// 因为VINS在求雅可比的时候是对非过参数(取四元数的xyz)进行直接求导，所以这里就不使用<A Tutorial on Graph-Based SLAM>中的方法了
 bool PoseLocalParameterization::ComputeJacobian(const double *x, double *jacobian) const
 {
     Eigen::Map<Eigen::Matrix<double, 7, 6, Eigen::RowMajor>> j(jacobian);

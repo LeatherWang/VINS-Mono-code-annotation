@@ -12,7 +12,7 @@ ProjectionFactor::ProjectionFactor(const Eigen::Vector3d &_pts_i, const Eigen::V
     Eigen::Vector3d tmp(0, 0, 1);
     if(a == tmp)
         tmp << 1, 0, 0;
-    b1 = (tmp - a * (a.transpose() * tmp)).normalized();
+    b1 = (tmp - a * (a.transpose() * tmp)).normalized(); //a.transpose()*(tmp - a * (a.transpose() * tmp)) = 0
     b2 = a.cross(b1);
     tangent_base.block<1, 3>(0, 0) = b1.transpose();
     tangent_base.block<1, 3>(1, 0) = b2.transpose();
@@ -35,13 +35,14 @@ bool ProjectionFactor::Evaluate(double const *const *parameters, double *residua
     double inv_dep_i = parameters[3][0];
 
     Eigen::Vector3d pts_camera_i = pts_i / inv_dep_i;
-    Eigen::Vector3d pts_imu_i = qic * pts_camera_i + tic;
-    Eigen::Vector3d pts_w = Qi * pts_imu_i + Pi;
-    Eigen::Vector3d pts_imu_j = Qj.inverse() * (pts_w - Pj);
-    Eigen::Vector3d pts_camera_j = qic.inverse() * (pts_imu_j - tic);
+    Eigen::Vector3d pts_imu_i = qic * pts_camera_i + tic; //转换到i的IMU坐标系下
+    Eigen::Vector3d pts_w = Qi * pts_imu_i + Pi; //转换到世界坐标系下
+    Eigen::Vector3d pts_imu_j = Qj.inverse() * (pts_w - Pj); //转换到j的IMU坐标系下
+    Eigen::Vector3d pts_camera_j = qic.inverse() * (pts_imu_j - tic); //转换到j的相机坐标系下
     Eigen::Map<Eigen::Vector2d> residual(residuals);
 
-#ifdef UNIT_SPHERE_ERROR 
+#ifdef UNIT_SPHERE_ERROR
+    //! 将残差转换到正切空间
     residual =  tangent_base * (pts_camera_j.normalized() - pts_j.normalized());
 #else
     double dep_j = pts_camera_j.z();
@@ -64,7 +65,7 @@ bool ProjectionFactor::Evaluate(double const *const *parameters, double *residua
         x2 = pts_camera_j(1);
         x3 = pts_camera_j(2);
         
-        //？？？？？这个矩阵是干嘛的？？？
+        //!@todo ？？？？？
         norm_jaco << 1.0 / norm - x1 * x1 / pow(norm, 3), - x1 * x2 / pow(norm, 3),            - x1 * x3 / pow(norm, 3),
                      - x1 * x2 / pow(norm, 3),            1.0 / norm - x2 * x2 / pow(norm, 3), - x2 * x3 / pow(norm, 3),
                      - x1 * x3 / pow(norm, 3),            - x2 * x3 / pow(norm, 3),            1.0 / norm - x3 * x3 / pow(norm, 3);
@@ -73,8 +74,9 @@ bool ProjectionFactor::Evaluate(double const *const *parameters, double *residua
         reduce << 1. / dep_j, 0, -pts_camera_j(0) / (dep_j * dep_j),
             0, 1. / dep_j, -pts_camera_j(1) / (dep_j * dep_j);
 #endif
-        reduce = sqrt_info * reduce;
+        reduce = sqrt_info * reduce; //!@attention 注意，雅可比也是要乘上信息sqrt_info，因为信息矩阵也是有单位的啊，推到见贺一家博客
 
+        // 对第一个相机i位姿的雅可比
         if (jacobians[0])
         {
             Eigen::Map<Eigen::Matrix<double, 2, 7, Eigen::RowMajor>> jacobian_pose_i(jacobians[0]);
@@ -87,6 +89,7 @@ bool ProjectionFactor::Evaluate(double const *const *parameters, double *residua
             jacobian_pose_i.rightCols<1>().setZero();
         }
 
+        //对第二个相机j位姿的雅可比
         if (jacobians[1])
         {
             Eigen::Map<Eigen::Matrix<double, 2, 7, Eigen::RowMajor>> jacobian_pose_j(jacobians[1]);
@@ -98,6 +101,8 @@ bool ProjectionFactor::Evaluate(double const *const *parameters, double *residua
             jacobian_pose_j.leftCols<6>() = reduce * jaco_j;
             jacobian_pose_j.rightCols<1>().setZero();
         }
+
+        //!@attention 对外参的雅可比
         if (jacobians[2])
         {
             Eigen::Map<Eigen::Matrix<double, 2, 7, Eigen::RowMajor>> jacobian_ex_pose(jacobians[2]);
@@ -109,6 +114,8 @@ bool ProjectionFactor::Evaluate(double const *const *parameters, double *residua
             jacobian_ex_pose.leftCols<6>() = reduce * jaco_ex;
             jacobian_ex_pose.rightCols<1>().setZero();
         }
+
+        // 对深度的雅可比
         if (jacobians[3])
         {
             Eigen::Map<Eigen::Vector2d> jacobian_feature(jacobians[3]);

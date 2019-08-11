@@ -73,8 +73,8 @@ class Estimator
 
     enum MarginalizationFlag
     {
-        MARGIN_OLD = 0,
-        MARGIN_SECOND_NEW = 1
+        MARGIN_OLD = 0, //如果次新的帧是关键帧，则将最老的关键帧margin掉
+        MARGIN_SECOND_NEW = 1 //如果不是关键帧，则将该帧和它的相机观测去掉，但保留IMU预积分
     };
 
     SolverFlag solver_flag;
@@ -99,11 +99,11 @@ class Estimator
     IntegrationBase *pre_integrations[(WINDOW_SIZE + 1)];
     Vector3d acc_0, gyr_0;
 
-    vector<double> dt_buf[(WINDOW_SIZE + 1)];
-    vector<Vector3d> linear_acceleration_buf[(WINDOW_SIZE + 1)];
+    vector<double> dt_buf[(WINDOW_SIZE + 1)]; //注意这不是vector，而是vector array，即二维数组
+    vector<Vector3d> linear_acceleration_buf[(WINDOW_SIZE + 1)]; //缓存下来是为了后面会重新预积分
     vector<Vector3d> angular_velocity_buf[(WINDOW_SIZE + 1)];
 
-    int frame_count;
+    int frame_count; //最大值是WINDOW_SIZE
     int sum_of_outlier, sum_of_back, sum_of_front, sum_of_invalid;
 
     FeatureManager f_manager;

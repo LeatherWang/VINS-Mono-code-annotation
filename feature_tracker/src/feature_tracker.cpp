@@ -18,7 +18,7 @@ void reduceVector(vector<cv::Point2f> &v, vector<uchar> status)
     int j = 0;
     for (int i = 0; i < int(v.size()); i++)
         if (status[i])
-            v[j++] = v[i];//j++表示先取出j的值，再加1
+            v[j++] = v[i];
     v.resize(j);
 }
 
@@ -156,7 +156,7 @@ void FeatureTracker::readImage(const cv::Mat &_img)
         //清理无法追踪到的特征点
         for (int i = 0; i < int(forw_pts.size()); i++)
             //有些特征点虽然能够跟踪到，但是位于图像边界外了，把这些特征点状态也标记为无效
-            if (status[i] && !inBorder(forw_pts[i]))
+            if (status[i] && !inBorder(forw_pts[i])) //! 边界是1个像素
                 status[i] = 0;
 
         //对于无法跟踪的特征点，不仅要从当前帧数据forw_pts中剔除，而且还要从prev_pts和cur_pts中剔除
@@ -183,7 +183,7 @@ void FeatureTracker::readImage(const cv::Mat &_img)
         TicToc t_m;
         
         //为下面的goodFeaturesToTrack保证相邻的特征点之间要相隔30个像素,设置mask image
-        setMask();
+        setMask(); //! @todo 排序的意义何在?
         ROS_DEBUG("set mask costs %fms", t_m.toc());
 
         ROS_DEBUG("detect feature begins");
@@ -208,7 +208,9 @@ void FeatureTracker::readImage(const cv::Mat &_img)
             // 0.1:角点质量水平的最低阈值（范围为0到1，质量最高角点的水平为1），小于该阈值的角点被拒绝
             // MIN_DIST:返回角点之间欧式距离的最小值
             // mask:和输入图像具有相同大小，类型必须为CV_8UC1,用来描述图像中感兴趣的区域，只在感兴趣区域中检测角点
-            cv::goodFeaturesToTrack(forw_img, n_pts, MAX_CNT - forw_pts.size(), 0.1, MIN_DIST, mask);
+            cv::goodFeaturesToTrack(forw_img, n_pts, MAX_CNT - forw_pts.size(),
+                                    0.05, MIN_DIST, mask, 5, false);
+
         }
         else
             n_pts.clear();
@@ -243,7 +245,7 @@ void FeatureTracker::rejectWithF()
         for (unsigned int i = 0; i < prev_pts.size(); i++)
         {
             Eigen::Vector3d tmp_p;
-            m_camera->liftProjective(Eigen::Vector2d(prev_pts[i].x, prev_pts[i].y), tmp_p);
+            m_camera->liftProjective(Eigen::Vector2d(prev_pts[i].x, prev_pts[i].y), tmp_p); //会去畸变
             tmp_p.x() = FOCAL_LENGTH * tmp_p.x() / tmp_p.z() + COL / 2.0;
             tmp_p.y() = FOCAL_LENGTH * tmp_p.y() / tmp_p.z() + ROW / 2.0;
             un_prev_pts[i] = cv::Point2f(tmp_p.x(), tmp_p.y());

@@ -11,6 +11,9 @@ void solveGyroscopeBias(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs)
     b.setZero();
     map<double, ImageFrame>::iterator frame_i;
     map<double, ImageFrame>::iterator frame_j;
+
+    // 求解方式很特别，居然不是用的最小二乘
+     //! @attention 参考崔的笔记
     for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end(); frame_i++)
     {
         frame_j = next(frame_i);
@@ -18,23 +21,26 @@ void solveGyroscopeBias(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs)
         tmp_A.setZero();
         VectorXd tmp_b(3);
         tmp_b.setZero();
-        Eigen::Quaterniond q_ij(frame_i->second.R.transpose() * frame_j->second.R);
+        Eigen::Quaterniond q_ij(frame_i->second.R.transpose() * frame_j->second.R);    //使用视觉测量的结果
         tmp_A = frame_j->second.pre_integration->jacobian.template block<3, 3>(O_R, O_BG);
-        tmp_b = 2 * (frame_j->second.pre_integration->delta_q.inverse() * q_ij).vec();
-        A += tmp_A.transpose() * tmp_A;
+        tmp_b = 2 * (frame_j->second.pre_integration->delta_q.inverse() * q_ij).vec(); //vec()表示取虚部的向量
+        A += tmp_A.transpose() * tmp_A; //! 为了转换成正定矩阵
         b += tmp_A.transpose() * tmp_b;
-
     }
-    delta_bg = A.ldlt().solve(b);
+
+    // 求解Ax=b，A.ldlt()表示对A进行Cholesky分解，solve(b)表示使用A的分解求解x
+    delta_bg = A.ldlt().solve(b); //先进行
     ROS_WARN_STREAM("gyroscope bias initial calibration " << delta_bg.transpose());
 
+    // 初始化得到陀螺仪bias的校正值，接着更新windows窗口所有陀螺仪的bias，因为bias漂移的比较慢
     for (int i = 0; i <= WINDOW_SIZE; i++)
         Bgs[i] += delta_bg;
 
+    // 重新预积分
     for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end( ); frame_i++)
     {
         frame_j = next(frame_i);
-        frame_j->second.pre_integration->repropagate(Vector3d::Zero(), Bgs[0]);
+        frame_j->second.pre_integration->repropagate(Vector3d::Zero(), Bgs[0]); //第一个参数为加速度的bias，忽略
     }
 }
 
@@ -48,7 +54,7 @@ MatrixXd TangentBasis(Vector3d &g0)
     Vector3d tmp(0, 0, 1);
     if(a == tmp)
         tmp << 1, 0, 0;
-    b = (tmp - a * (a.transpose() * tmp)).normalized();
+    b = (tmp - a * (a.transpose() * tmp)).normalized(); //先投影，再加一起，搞出来一个垂直的向量
     c = a.cross(b);
     MatrixXd bc(3, 2);
     bc.block<3, 1>(0, 0) = b;
@@ -56,9 +62,9 @@ MatrixXd TangentBasis(Vector3d &g0)
     return bc;
 }
 
-//see V-B-3 in Paper
-//1.按照论文思路，重力向量是由重力大小所约束的，论文中使用半球加上半球切面来参数化重力
-//2.然后迭代求得w1,w2
+// see V-B-3 in Paper
+// 1.按照论文思路，重力向量是由重力大小所约束的，论文中使用半球加上半球切面来参数化重力
+// 2.然后迭代求得w1,w2
 void RefineGravity(map<double, ImageFrame> &all_image_frame, Vector3d &g, VectorXd &x)
 {
     Vector3d g0 = g.normalized() * G.norm();
@@ -94,12 +100,14 @@ void RefineGravity(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vector
             tmp_A.block<3, 3>(0, 0) = -dt * Matrix3d::Identity();
             tmp_A.block<3, 2>(0, 6) = frame_i->second.R.transpose() * dt * dt / 2 * Matrix3d::Identity() * lxly;
             tmp_A.block<3, 1>(0, 8) = frame_i->second.R.transpose() * (frame_j->second.T - frame_i->second.T) / 100.0;     
-            tmp_b.block<3, 1>(0, 0) = frame_j->second.pre_integration->delta_p + frame_i->second.R.transpose() * frame_j->second.R * TIC[0] - TIC[0] - frame_i->second.R.transpose() * dt * dt / 2 * g0;
+            tmp_b.block<3, 1>(0, 0) = frame_j->second.pre_integration->delta_p +
+                    frame_i->second.R.transpose() * frame_j->second.R * TIC[0] - TIC[0] - frame_i->second.R.transpose() * dt * dt / 2 * g0;
 
             tmp_A.block<3, 3>(3, 0) = -Matrix3d::Identity();
             tmp_A.block<3, 3>(3, 3) = frame_i->second.R.transpose() * frame_j->second.R;
             tmp_A.block<3, 2>(3, 6) = frame_i->second.R.transpose() * dt * Matrix3d::Identity() * lxly;
-            tmp_b.block<3, 1>(3, 0) = frame_j->second.pre_integration->delta_v - frame_i->second.R.transpose() * dt * Matrix3d::Identity() * g0;
+            tmp_b.block<3, 1>(3, 0) = frame_j->second.pre_integration->delta_v -
+                    frame_i->second.R.transpose() * dt * Matrix3d::Identity() * g0;
 
 
             Matrix<double, 6, 6> cov_inv = Matrix<double, 6, 6>::Zero();
@@ -119,19 +127,20 @@ void RefineGravity(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vector
             A.block<6, 3>(i * 3, n_state - 3) += r_A.topRightCorner<6, 3>();
             A.block<3, 6>(n_state - 3, i * 3) += r_A.bottomLeftCorner<3, 6>();
         }
-            A = A * 1000.0;
-            b = b * 1000.0;
-            x = A.ldlt().solve(b);
-            VectorXd dg = x.segment<2>(n_state - 3);
-            g0 = (g0 + lxly * dg).normalized() * G.norm();
-            //double s = x(n_state - 1);
+
+        A = A * 1000.0;
+        b = b * 1000.0;
+        x = A.ldlt().solve(b);
+        VectorXd dg = x.segment<2>(n_state - 3);
+        g0 = (g0 + lxly * dg).normalized() * G.norm();
+        //double s = x(n_state - 1);
     }   
     g = g0;
 }
 
-//初始化滑动窗口中每帧的 速度V[0:n] Gravity Vectorg,尺度s -> 对应论文的V-B-2
-//重力修正RefineGravity -> 对应论文的V-B-3
-//重力方向跟世界坐标的Z轴对齐
+// 初始化滑动窗口中每帧的 速度V[0:n] Gravity Vectorg,尺度s -> 对应论文的V-B-2
+// 重力修正RefineGravity -> 对应论文的V-B-3
+// 重力方向跟世界坐标的Z轴对齐
 bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, VectorXd &x)
 {
     int all_frame_count = all_image_frame.size();
@@ -187,7 +196,7 @@ bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vect
     A = A * 1000.0;
     b = b * 1000.0;
     x = A.ldlt().solve(b);
-    double s = x(n_state - 1) / 100.0;
+    double s = x(n_state - 1) / 100.0; //! @todo 什么鬼
     ROS_DEBUG("estimated scale: %f", s);
     g = x.segment<3>(n_state - 4);
     ROS_DEBUG_STREAM(" result g     " << g.norm() << " " << g.transpose());
@@ -196,7 +205,7 @@ bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vect
         return false;
     }
 
-    RefineGravity(all_image_frame, g, x);
+    RefineGravity(all_image_frame, g, x); //修复重力
     s = (x.tail<1>())(0) / 100.0;
     (x.tail<1>())(0) = s;
     ROS_DEBUG_STREAM(" refine     " << g.norm() << " " << g.transpose());
@@ -217,3 +226,21 @@ bool VisualIMUAlignment(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs,
     else 
         return false;
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

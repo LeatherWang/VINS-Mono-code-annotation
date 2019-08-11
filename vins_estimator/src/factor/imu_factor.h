@@ -19,7 +19,6 @@ class IMUFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9>
     //IMU对应的残差，对应ceres的结构，需要自己计算jacobian
     virtual bool Evaluate(double const *const *parameters, double *residuals, double **jacobians) const
     {
-
         Eigen::Vector3d Pi(parameters[0][0], parameters[0][1], parameters[0][2]);
         Eigen::Quaterniond Qi(parameters[0][6], parameters[0][3], parameters[0][4], parameters[0][5]);
 
@@ -58,13 +57,17 @@ class IMUFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9>
         }
 #endif
 
+        // 更新预积分之后，使用公式24计算残差
         Eigen::Map<Eigen::Matrix<double, 15, 1>> residual(residuals);
+
+        // 参考崔的推导公式20
         residual = pre_integration->evaluate(Pi, Qi, Vi, Bai, Bgi,
                                             Pj, Qj, Vj, Baj, Bgj);
 
-        Eigen::Matrix<double, 15, 15> sqrt_info = Eigen::LLT<Eigen::Matrix<double, 15, 15>>(pre_integration->covariance.inverse()).matrixL().transpose();
+        Eigen::Matrix<double, 15, 15> sqrt_info =
+                Eigen::LLT<Eigen::Matrix<double, 15, 15>>(pre_integration->covariance.inverse()).matrixL().transpose(); //matrixL()是Cholesky分解中的下三角矩阵
         //sqrt_info.setIdentity();
-        residual = sqrt_info * residual;
+        residual = sqrt_info * residual; //信息矩阵^(-1/2)*残差
 
         if (jacobians)
         {
@@ -95,13 +98,15 @@ class IMUFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9>
 #if 0
             jacobian_pose_i.block<3, 3>(O_R, O_R) = -(Qj.inverse() * Qi).toRotationMatrix();
 #else
+                //! @attention 使用bias的微小变化更新IMU预积分，第62行不是做过了吗??
+                //! 62行那是计算给残差，因为残差计算的时候使用的是更新过的预积分，所以雅可比里面必然也要使用更新过的，因为雅可比就是对残差的梯度啊!
                 Eigen::Quaterniond corrected_delta_q = pre_integration->delta_q * Utility::deltaQ(dq_dbg * (Bgi - pre_integration->linearized_bg));
                 jacobian_pose_i.block<3, 3>(O_R, O_R) = -(Utility::Qleft(Qj.inverse() * Qi) * Utility::Qright(corrected_delta_q)).bottomRightCorner<3, 3>();
 #endif
 
                 jacobian_pose_i.block<3, 3>(O_V, O_R) = Utility::skewSymmetric(Qi.inverse() * (G * sum_dt + Vj - Vi));
 
-                jacobian_pose_i = sqrt_info * jacobian_pose_i;
+                jacobian_pose_i = sqrt_info * jacobian_pose_i; //! @attention 乘上信息矩阵
 
                 if (jacobian_pose_i.maxCoeff() > 1e8 || jacobian_pose_i.minCoeff() < -1e8)
                 {

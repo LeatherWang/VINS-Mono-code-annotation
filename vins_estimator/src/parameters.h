@@ -18,7 +18,7 @@ const double LOOP_INFO_VALUE = 50.0;
 #define UNIT_SPHERE_ERROR
 
 extern double INIT_DEPTH;
-extern double MIN_PARALLAX;
+extern double MIN_PARALLAX; //默认`10个像素/FOCAL_LENGTH`
 extern int ESTIMATE_EXTRINSIC;
 
 extern double ACC_N, ACC_W;

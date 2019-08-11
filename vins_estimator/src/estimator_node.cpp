@@ -112,7 +112,7 @@ void update()
 }
 
 /**
- * @brief 对其imu和图像数据进行初步对齐，使得一副图像对应多组imu数据，并确保相邻图像对应时间戳内的所有IMU数据
+ * @brief 对imu和图像数据进行初步对齐，使得一副图像对应多组imu数据，并确保相邻图像对应时间戳内的所有IMU数据
  *
  */
 std::vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, sensor_msgs::PointCloudConstPtr>>
@@ -122,9 +122,14 @@ getMeasurements()
 
     while (true)
     {
+        // 两种情况，第一次循环走到这里，如果二者中有任何一个为空就直接返回
+        // 循环第二次走到这里，如果任何一个为空，表示measurements中已经存好同步数据
         if (imu_buf.empty() || feature_buf.empty())
             return measurements;
 
+        //! 正常顺序是，一张图片时间戳前面有几帧IMU数据(第一帧IMU的时间戳<图像的时间戳<最后一帧IMU的时间戳)
+        // 第一张图像的时间戳大于<最后一帧IMU时间戳>，图像时间戳一定小于当前真实时间，IMU的时间近似等于真实时间，
+        // 当我得到这张图片时，图像的时间戳居然比真实时间要大，说明IMU来的太慢了
         if (!(imu_buf.back()->header.stamp > feature_buf.front()->header.stamp))
         {
             ROS_WARN("wait for imu, only should happen at the beginning");
@@ -132,6 +137,7 @@ getMeasurements()
             return measurements;
         }
 
+        // 第一帧IMU时间戳大于第一张图像的时间戳，扔掉一张图片
         if (!(imu_buf.front()->header.stamp < feature_buf.front()->header.stamp))
         {
             ROS_WARN("throw img, only should happen at the beginning");
@@ -160,11 +166,11 @@ void imu_callback(const sensor_msgs::ImuConstPtr &imu_msg)
     m_buf.lock();
     imu_buf.push(imu_msg);
     m_buf.unlock();
-    con.notify_one();
+    con.notify_one(); //发送条件变量
 
     {
         std::lock_guard<std::mutex> lg(m_state);
-        predict(imu_msg);
+        predict(imu_msg); //! @attention 仅仅使用IMU进行预测
         std_msgs::Header header = imu_msg->header;
         header.frame_id = "world";
         if (estimator.solver_flag == Estimator::SolverFlag::NON_LINEAR)
@@ -189,7 +195,7 @@ void feature_callback(const sensor_msgs::PointCloudConstPtr &feature_msg)
     m_buf.lock();
     feature_buf.push(feature_msg);
     m_buf.unlock();
-    con.notify_one();
+    con.notify_one(); //发送条件变量
 }
 
 //发送IMU数据进行预积分
@@ -448,6 +454,8 @@ void process()
     {
         std::vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, sensor_msgs::PointCloudConstPtr>> measurements;
         std::unique_lock<std::mutex> lk(m_buf);
+        // 接收一帧IMU数据或者点云数据，则发送一次条件变量
+        // 只有当lamda表达式返回为true时，才解除线程的挂起
         con.wait(lk, [&]
                  {
             return (measurements = getMeasurements()).size() != 0;
@@ -456,7 +464,7 @@ void process()
 
         for (auto &measurement : measurements)
         {
-            //分别取出各段imu数据，进行预积分
+            //! @attention 分别取出各段imu数据，进行预积分
             for (auto &imu_msg : measurement.first)
                 send_imu(imu_msg);
 
@@ -470,12 +478,12 @@ void process()
             {
                 int v = img_msg->channels[0].values[i] + 0.5;
                 int feature_id = v / NUM_OF_CAM;
-                int camera_id = v % NUM_OF_CAM;
-                double x = img_msg->points[i].x;
+                int camera_id = v % NUM_OF_CAM; //NUM_OF_CAM是1时，camera_id恒等于0
+                double x = img_msg->points[i].x; //归一化坐标
                 double y = img_msg->points[i].y;
                 double z = img_msg->points[i].z;
                 ROS_ASSERT(z == 1);
-                image[feature_id].emplace_back(camera_id, Vector3d(x, y, z));
+                image[feature_id].emplace_back(camera_id, Vector3d(x, y, z)); //只有双目情况下，这个feature_id才会在for循环出现两次
             }
             estimator.processImage(image, img_msg->header);
             /**
@@ -581,6 +589,45 @@ void process()
     }
 }
 
+
+class myque
+{
+    vector<int> vec;
+    int size, head, tail;
+    myque(int size_)
+    {
+        head = tail = 0;
+        size = size_;
+        vec.resize(size);
+    }
+
+    void EnQueue(int value){
+        if(IsFull())
+            return;
+        tail = (tail+1)%size;
+        vec[tail] = value;
+    }
+
+    int DeQueue(){
+        if(IsEmpty())
+            return 0;
+        int res = vec[head];
+        head = (head+1)%size;
+        return res;
+    }
+
+    bool IsFull(){
+        if((tail+1)%size == head)
+            return true;
+        return false;
+    }
+
+    bool IsEmpty(){
+        if(head == tail)
+            return true;
+        return false;
+    }
+};
 int main(int argc, char **argv)
 {
     ros::init(argc, argv, "vins_estimator");
@@ -597,7 +644,7 @@ int main(int argc, char **argv)
     registerPub(n);
 
     //订阅IMU,feature,image的topic,然后在各自的回调里处理消息
-    ros::Subscriber sub_imu = n.subscribe(IMU_TOPIC, 2000, imu_callback, ros::TransportHints().tcpNoDelay());
+    ros::Subscriber sub_imu = n.subscribe(IMU_TOPIC, 2000, imu_callback, ros::TransportHints().tcpNoDelay()); //! @attention
     ros::Subscriber sub_image = n.subscribe("/feature_tracker/feature", 2000, feature_callback);
     ros::Subscriber sub_raw_image = n.subscribe(IMAGE_TOPIC, 2000, raw_image_callback);
 

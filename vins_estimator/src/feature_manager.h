@@ -86,7 +86,7 @@ class FeatureManager
 
   private:
     double compensatedParallax2(const FeaturePerId &it_per_id, int frame_count);
-    const Matrix3d *Rs;
+    const Matrix3d *Rs; //指向estimator中Rs的地址
     Matrix3d ric[NUM_OF_CAM];
 };
 

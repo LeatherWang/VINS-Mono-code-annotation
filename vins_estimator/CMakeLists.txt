@@ -23,10 +23,11 @@ find_package(Ceres REQUIRED)
 include_directories(${catkin_INCLUDE_DIRS} ${CERES_INCLUDE_DIRS})
 
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
-find_package(Eigen3  REQUIRED)
+#find_package(Eigen3  REQUIRED)
 include_directories(
   ${catkin_INCLUDE_DIRS}
-  ${EIGEN3_INCLUDE_DIR}
+#  ${EIGEN3_INCLUDE_DIR}
+  "/usr/include/eigen3"
 )
 
 catkin_package()

@@ -165,7 +165,7 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
             if (i != 1 || !STEREO_TRACK)
             {
                 //单目
-                auto un_pts = trackerData[i].undistortedPoints();
+                auto un_pts = trackerData[i].undistortedPoints(); //去畸变，归一化平面坐标
                 auto &cur_pts = trackerData[i].cur_pts;
                 auto &ids = trackerData[i].ids;
                 for (unsigned int j = 0; j < ids.size(); j++)
@@ -178,7 +178,7 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
                     p.z = 1;
 
                     feature_points->points.push_back(p);
-                    id_of_point.values.push_back(p_id * NUM_OF_CAM + i);
+                    id_of_point.values.push_back(p_id * NUM_OF_CAM + i); //如果NUM_OF_CAM是偶数(双目)，这就有区别了，当i=0时`p_id * NUM_OF_CAM + i`为偶数，否则奇数
                     u_of_point.values.push_back(cur_pts[j].x);
                     v_of_point.values.push_back(cur_pts[j].y);
                     ROS_ASSERT(inBorder(cur_pts[j]));
@@ -253,6 +253,9 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
             cv::waitKey(5);
             */
             pub_match.publish(ptr->toImageMsg());
+            static int imageCounter = 0;
+            cv::imwrite(string("/home/leather/lxdata/ankobot_projects/datasets/vins_out/") +
+                        std::to_string(imageCounter++) + ".jpg", ptr->image);
         }
     }
     ROS_INFO("whole feature tracker processing costs: %f", t_r.toc());

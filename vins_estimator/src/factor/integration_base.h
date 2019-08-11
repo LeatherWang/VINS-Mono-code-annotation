@@ -29,13 +29,14 @@ class IntegrationBase
 
     void push_back(double dt, const Eigen::Vector3d &acc, const Eigen::Vector3d &gyr)
     {
-        dt_buf.push_back(dt);
+        dt_buf.push_back(dt); //存起来，后面可能需要重新预积分，见repropagate函数
         acc_buf.push_back(acc);
         gyr_buf.push_back(gyr);
-        propagate(dt, acc, gyr);
+        propagate(dt, acc, gyr); //预积分
     }
 
-    //由于优化过程中Bias会更新，有时候需要根据新的bias重新计算预积分
+    // 由于优化过程中Bias会更新，有时候需要根据新的bias重新计算预积分
+    // 可能因为这里bias是在初始化时候估计出来的，所以不是小量，不能使用公式12(一阶泰勒展开)更新预积分
     void repropagate(const Eigen::Vector3d &_linearized_ba, const Eigen::Vector3d &_linearized_bg)
     {
         sum_dt = 0.0;
@@ -67,7 +68,8 @@ class IntegrationBase
         result_delta_q = delta_q * Quaterniond(1, un_gyr(0) * _dt / 2, un_gyr(1) * _dt / 2, un_gyr(2) * _dt / 2);
         Vector3d un_acc_1 = result_delta_q * (_acc_1 - linearized_ba);
         Vector3d un_acc = 0.5 * (un_acc_0 + un_acc_1);
-        result_delta_p = delta_p + delta_v * _dt + 0.5 * un_acc * _dt * _dt;
+        // 这里积分出来的是前后两帧之间的 IMU 增量信息
+        result_delta_p = delta_p + delta_v * _dt + 0.5 * un_acc * _dt * _dt; //这是的un_acc是没有去重力g的
         result_delta_v = delta_v + un_acc * _dt;
         result_linearized_ba = linearized_ba;
         result_linearized_bg = linearized_bg;         
@@ -140,9 +142,10 @@ class IntegrationBase
         Vector3d result_delta_p;
         Quaterniond result_delta_q;
         Vector3d result_delta_v;
-        Vector3d result_linearized_ba;
+        Vector3d result_linearized_ba; //预积分期间不改变
         Vector3d result_linearized_bg;
 
+        //! 中点法
         midPointIntegration(_dt, acc_0, gyr_0, _acc_1, _gyr_1, delta_p, delta_q, delta_v,
                             linearized_ba, linearized_bg,
                             result_delta_p, result_delta_q, result_delta_v,
@@ -162,6 +165,7 @@ class IntegrationBase
      
     }
 
+    // 参考崔的推导公式20
     Eigen::Matrix<double, 15, 1> evaluate(const Eigen::Vector3d &Pi, const Eigen::Quaterniond &Qi, const Eigen::Vector3d &Vi, const Eigen::Vector3d &Bai, const Eigen::Vector3d &Bgi,
                                           const Eigen::Vector3d &Pj, const Eigen::Quaterniond &Qj, const Eigen::Vector3d &Vj, const Eigen::Vector3d &Baj, const Eigen::Vector3d &Bgj)
     {
@@ -175,10 +179,10 @@ class IntegrationBase
         Eigen::Matrix3d dv_dba = jacobian.block<3, 3>(O_V, O_BA);
         Eigen::Matrix3d dv_dbg = jacobian.block<3, 3>(O_V, O_BG);
 
-        Eigen::Vector3d dba = Bai - linearized_ba;
+        Eigen::Vector3d dba = Bai - linearized_ba; //linearized_ba在优化过程中是不变的
         Eigen::Vector3d dbg = Bgi - linearized_bg;
 
-        Eigen::Quaterniond corrected_delta_q = delta_q * Utility::deltaQ(dq_dbg * dbg);
+        Eigen::Quaterniond corrected_delta_q = delta_q * Utility::deltaQ(dq_dbg * dbg); //使用上一次优化后的bias，更新一下预积分
         Eigen::Vector3d corrected_delta_v = delta_v + dv_dba * dba + dv_dbg * dbg;
         Eigen::Vector3d corrected_delta_p = delta_p + dp_dba * dba + dp_dbg * dbg;
 

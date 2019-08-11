@@ -18,16 +18,23 @@ bool InitialEXRotation::CalibrationExRotation(vector<pair<Vector3d, Vector3d>> c
     Eigen::MatrixXd A(frame_count * 4, 4);
     A.setZero();
     int sum_ok = 0;
+
+    // 参考论文: <Indirect Kalman Filter for 3D Attitude Estimation>
+    // (L(qA)-R(qB))*qic=0
+    // (L(qA)-R(qB))的秩是2
     for (int i = 1; i <= frame_count; i++)
     {
         Quaterniond r1(Rc[i]);
         Quaterniond r2(Rc_g[i]);
 
-        double angular_distance = 180 / M_PI * r1.angularDistance(r2);
+        // 点乘结果是标量，两个单位四元数点乘的结果区间为[-1,1]
+        // 点乘结果的绝对值越大，相乘的两个四元数代表的角位移越相似
+        // 点乘结果对应 the cosine of half the angle between the two rotations
+        double angular_distance = 180 / M_PI * r1.angularDistance(r2); //angularDistance()计算
         ROS_DEBUG(
             "%d %f", i, angular_distance);
 
-        double huber = angular_distance > 5.0 ? 5.0 / angular_distance : 1.0;
+        double huber = angular_distance > 5.0 ? 5.0 / angular_distance : 1.0; //鲁棒系数，作为权重
         ++sum_ok;
         Matrix4d L, R;
 
@@ -56,7 +63,7 @@ bool InitialEXRotation::CalibrationExRotation(vector<pair<Vector3d, Vector3d>> c
     //cout << svd.singularValues().transpose() << endl;
     //cout << ric << endl;
     Vector3d ric_cov;
-    ric_cov = svd.singularValues().tail<3>();
+    ric_cov = svd.singularValues().tail<3>(); //奇异值需要大于0.25，即当Qn的秩等于3时，又即对应的零向量空间维数为1
     if (frame_count >= WINDOW_SIZE && ric_cov(1) > 0.25)
     {
         calib_ric_result = ric;
@@ -66,6 +73,7 @@ bool InitialEXRotation::CalibrationExRotation(vector<pair<Vector3d, Vector3d>> c
         return false;
 }
 
+// 对极几何求解R
 Matrix3d InitialEXRotation::solveRelativeR(const vector<pair<Vector3d, Vector3d>> &corres)
 {
     if (corres.size() >= 9)
